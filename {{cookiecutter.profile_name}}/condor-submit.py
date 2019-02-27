@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 #
 # Copyright © 2019 Matthew Stone <mrstone3@wisc.edu>
@@ -43,13 +43,13 @@ def condor_submit(jobscript):
                 output          = jobscript.out
                 error           = jobscript.err
                 queue
-                """)
+                """))
 
         shutil.copyfile(jobscript, os.path.join(jobdir, 'jobscript.sh'))
 
         workdir = os.getcwd()
         os.chdir(jobdir)
-        cmd = ['condor_submit', subfile.name]
+        cmd = ['condor_submit', '-verbose', subfile.name]
 
         for i in range(10):
             try:
@@ -62,7 +62,7 @@ def condor_submit(jobscript):
         info = parse_condor_submit_info(res)
         os.chdir(workdir)
 
-    print(res['jobid'])
+    print(info['jobid'])
 
 
 def main():
