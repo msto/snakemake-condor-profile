@@ -16,9 +16,28 @@ import shutil
 import subprocess
 
 from snakemake.utils import read_job_properties
+#  from snakemake.logging import format_wildcards
+
+def format_wildcards(wildcards, key_order=None):
+    """
+    Convert wildcard dict to string suitable for filename suffix
+
+    (Snakemake built-in doesn't work with Condor because it includes equal
+    signs)
+    """
+
+    # Alphabetically sort keys if no other order specified
+    if key_order is None:
+        key_order = sorted(wildcards.keys())
+
+    return ','.join(['{0}_{1}'.format(k, wildcards[k]) for k in key_order])
 
 
 def parse_condor_submit_info(res):
+    """
+    Parse submission info from condor_submit. For now, just scrape job ID
+    """
+
     info = dict()
 
     stdout = res.stdout.split(b'\n')
@@ -30,37 +49,47 @@ def parse_condor_submit_info(res):
 
 
 def condor_submit(jobscript):
+    """
+    Submit snakemake jobscript to Condor.
+
+    Creates `condor` directory in working directory, where job submission files
+    and log files are stored.
+        - condor/sub/rule.wildcards.sub : submission file
+        - condor/log/rule.wildcards.log : Condor log
+        - condor/out/rule.wildcards.out : Job stdout
+        - condor/err/rule.wildcards.err : Job stderr
+    """
     job_properties = read_job_properties(jobscript)
 
-    with tempfile.TemporaryDirectory() as jobdir:
-        sub_path = os.path.join(jobdir, 'job.sub')
+    # Create condor log directories if necessary
+    for logdir in 'sub log out err'.split():
+        sub_dir = os.path.join(os.getcwd(), 'condor', logdir)
+        os.makedirs(sub_dir, exist_ok=True)
 
-        # TODO: add job properties as params
-        with open(sub_path, 'w') as subfile:
-            subfile.write(textwrap.dedent("""
-                executable      = jobscript.sh
-                log             = jobscript.log
-                output          = jobscript.out
-                error           = jobscript.err
-                queue
-                """))
+    # TODO: add Condor params to job properties
+    # TODO: parameterize location of `condor` directory
+    wildcard_str = format_wildcards(job_properties['wildcards'])
+    sub_path = os.path.join(os.getcwd(), 'condor', 'sub', '{rule}.{wildcards}.sub')
+    sub_path = sub_path.format(rule=job_properties['rule'],
+                               wildcards=wildcard_str)
 
-        shutil.copyfile(jobscript, os.path.join(jobdir, 'jobscript.sh'))
+    with open(sub_path, 'w') as subfile:
+        subfile.write(textwrap.dedent("""
+            executable      = {jobscript}
+            log             = condor/log/{rule}.{wildcards}.log
+            output          = condor/out/{rule}.{wildcards}.out
+            error           = condor/err/{rule}.{wildcards}.err
+            queue
+            """).format(jobscript=jobscript, 
+                        rule=job_properties['rule'],
+                        wildcards=wildcard_str))
 
-        workdir = os.getcwd()
-        os.chdir(jobdir)
-        cmd = ['condor_submit', '-verbose', subfile.name]
+    # Submit job to condor
+    cmd = ['condor_submit', '-verbose', subfile.name]
+    res = subprocess.run(cmd, check=True, stdout=subprocess.PIPE)
 
-        for i in range(10):
-            try:
-                res = subprocess.run(cmd, check=True, stdout=subprocess.PIPE)
-                break
-            except subprocess.CalledProcessError as e:
-                if i >= 9:
-                    raise e
-
-        info = parse_condor_submit_info(res)
-        os.chdir(workdir)
+    # Get job ID back
+    info = parse_condor_submit_info(res)
 
     print(info['jobid'])
 
